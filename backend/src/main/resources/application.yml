@@ -1,0 +1,47 @@
+server:
+  port: ${PORT:8080}
+  compression:
+    # /api/network con el dataset real pesa ~800 KB; comprimido baja a ~150 KB.
+    # text/event-stream queda fuera a propósito para no romper SSE.
+    enabled: true
+    mime-types: application/json
+    min-response-size: 2048
+
+spring:
+  application:
+    name: fleet-sim
+
+app:
+  # Ruta del archivo de datos. Acepta "classpath:..." o una ruta absoluta del
+  # sistema de archivos (p. ej. APP_DATA_FILE=/datos/data-prueba.json).
+  data-file: ${APP_DATA_FILE:classpath:data/data.json}
+  # Orden de coordenadas en el archivo: AUTO | LAT_LNG | LNG_LAT
+  coordinate-order: ${APP_COORD_ORDER:AUTO}
+  # Orígenes permitidos para CORS (coma-separados). "*" para la demo.
+  cors-origins: ${APP_CORS_ORIGINS:*}
+  sim:
+    trucks: ${APP_TRUCKS:5}
+    tick-seconds: ${APP_TICK_SECONDS:1}
+    # Acelera el reloj de pared sin alterar la física ni las estadísticas:
+    # con 5, un viaje de 10 min simulados se ve en 2 min reales. Usa 1 para 1:1.
+    time-scale: ${APP_TIME_SCALE:5}
+    speed-min-kmh: ${APP_SPEED_MIN:15}
+    speed-max-kmh: ${APP_SPEED_MAX:45}
+    loading-seconds: ${APP_LOADING_SECONDS:4}
+    unloading-seconds: ${APP_UNLOADING_SECONDS:4}
+    # Distancia máxima (m) para "pegar" una ubicación al nodo más cercano de la red
+    snap-max-meters: ${APP_SNAP_MAX_METERS:200}
+  report:
+    fast-threshold-pct: ${APP_FAST_PCT:10}
+    slow-threshold-pct: ${APP_SLOW_PCT:10}
+    min-samples: ${APP_MIN_SAMPLES:10}
+    llm:
+      # Explicación con LLM (opcional). Si falla o está apagado, siempre hay
+      # respaldo heurístico determinista.
+      enabled: ${APP_LLM_ENABLED:false}
+      model: ${APP_LLM_MODEL:claude-haiku-4-5}
+      api-key: ${ANTHROPIC_API_KEY:}
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html

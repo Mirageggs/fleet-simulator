@@ -1,0 +1,12 @@
+# Blueprint de Render para desplegar el backend con un clic (o crear el
+# servicio manualmente: Web Service -> Docker -> Root Directory: backend).
+services:
+  - type: web
+    name: ms4m-fleet-sim-api
+    runtime: docker
+    rootDir: backend
+    plan: free
+    healthCheckPath: /api/health
+    envVars:
+      - key: APP_CORS_ORIGINS
+        value: "*"
