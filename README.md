@@ -44,7 +44,7 @@ Flujo: al arrancar, el backend **lee y valida** el JSON (nunca lo modifica), con
 │   │   ├── report/           # ReportService, HeuristicExplainer, LlmExplainer (opcional)
 │   │   └── web/              # controladores REST + manejador de errores
 │   ├── src/main/resources/data/data.json       # dataset real de la evaluación
-|   |── src/main/resources/data/data-demo.json  # dataset demo con casos inválidos
+│   ├── src/main/resources/data/data-demo.json  # dataset demo con casos inválidos
 │   ├── src/test/java/...     # pruebas JUnit 5
 │   └── Dockerfile
 ├── frontend/                 # React + Vite + Leaflet
@@ -102,7 +102,7 @@ Por defecto el frontend apunta a `http://localhost:8080`; para otro backend crea
 
 ## 3. Contrato de la API
 
-Base: `/api`. Respuestas de error siempre con la forma `{"mensaje": "..."}` (409 estado inválido, 404 recurso inexistente, 500 error interno). Documentación navegable en `/swagger-ui.html`.
+Base: `/api`. Respuestas de error siempre con la forma `{"mensaje": "..."}` (409 estado inválido, 404 recurso inexistente, 500 error interno). Documentación navegable en `/swagger-ui/index.html`.
 
 ### `GET /api/health`
 Salud y resumen de la carga de datos.
@@ -251,115 +251,197 @@ Cobertura de lo crítico:
 
 El frontend se verifica con `npm run build` (compilación estricta de Vite).
 
-## 9. Despliegue
-Frontend: https://fleet-simulator-wine.vercel.app/
-Backend: https://ms4m-fleet-sim-api.onrender.com
-Swagger: https://ms4m-fleet-sim-api.onrender.com/swagger-ui/index.html
-Estado del servicio: https://ms4m-fleet-sim-api.onrender.com/api/health
-Repositorio: https://github.com/Mirageggs/fleet-simulator
+## 9. Despliegue y demostración
+
+La solución se encuentra publicada y puede probarse sin instalación local.
+
+| Recurso | URL |
+|---|---|
+| **Aplicación web** | [fleet-simulator-wine.vercel.app](https://fleet-simulator-wine.vercel.app/) |
+| **API pública** | [ms4m-fleet-sim-api.onrender.com](https://ms4m-fleet-sim-api.onrender.com) |
+| **Swagger / OpenAPI** | [swagger-ui/index.html](https://ms4m-fleet-sim-api.onrender.com/swagger-ui/index.html) |
+| **Estado del servicio** | [api/health](https://ms4m-fleet-sim-api.onrender.com/api/health) |
+| **Repositorio** | [github.com/Mirageggs/fleet-simulator](https://github.com/Mirageggs/fleet-simulator) |
+
+### Arquitectura de despliegue
+
+```text
+GitHub
+├── backend/  ── Docker ──► Render
+└── frontend/ ── Vite   ──► Vercel
+                              │
+                              └── VITE_API_URL apunta a Render
+```
+
+El backend se ejecuta en Render como un proceso persistente porque conserva el estado de la simulación en memoria y mantiene una conexión SSE durante las actualizaciones. El frontend se publica en Vercel como una aplicación estática compilada con Vite.
+
+> **Nota:** el plan gratuito de Render puede suspender el servicio después de un periodo de inactividad. La primera solicitud puede tardar algunos segundos mientras la instancia vuelve a iniciar.
+
+---
 
 ## 10. Respuestas a las preguntas del enunciado
 
-###Enfoque de la solución
+### 10.1 Enfoque general
 
-        La solución se construyó como una aplicación full stack con Java y Spring Boot para el backend, y React con JavaScript y Leaflet para el frontend.
+La solución se planteó como una aplicación full stack separada en dos componentes:
 
-        El backend carga y valida el archivo JSON sin modificarlo, transforma los tramos en un grafo vial y determina sus componentes conexos. Los puntos consecutivos de cada polilínea se modelan como conexiones transitables, mientras que la distancia geográfica se utiliza como costo de recorrido.
+- **Backend:** Java 17 con Spring Boot.
+- **Frontend:** React con JavaScript, Vite y Leaflet.
 
-        Al iniciar la simulación, se crean cinco camiones con identificadores estables. Cada camión recibe una ubicación de carga y una ubicación de descarga pertenecientes a una misma zona conectada. El recorrido se calcula mediante Dijkstra y el camión avanza progresivamente por los puntos de
-        dicho recorrido.
+Al iniciar, el backend carga y valida el archivo JSON sin modificarlo. Después convierte los tramos viales en un grafo, calcula sus componentes conexos y prepara las ubicaciones de carga y descarga que pueden utilizarse en una simulación.
 
-        El estado de la simulación se mantiene en memoria. Las posiciones se transmiten al frontend mediante Server-Sent Events, con polling como mecanismo de respaldo. El frontend representa los tramos, las ubicaciones y los camiones sobre un mapa Leaflet.
+Cuando se inicia una corrida, el sistema crea exactamente cinco camiones con identificadores estables. Para cada camión selecciona un origen de carga y un destino de descarga alcanzable, calcula el recorrido sobre la red y actualiza periódicamente su posición, velocidad y estado.
 
-        Finalmente, el backend conserva las muestras de velocidad de cada camión y genera un reporte con velocidad mínima, máxima y promedio. Una heurística determinista produce una explicación en lenguaje humano a partir de los valores calculados.
+El frontend consume la red vial mediante HTTP, representa los elementos sobre Leaflet y recibe el estado de la flota mediante Server-Sent Events. Al finalizar —o durante una consulta parcial— muestra el reporte de velocidades y una explicación generada mediante reglas heurísticas.
 
-###Alternativas consideradas
-####Algoritmo de rutas
+### 10.2 Red vial y selección de recorridos
 
-        Se utilizó Dijkstra porque permite calcular la ruta de menor costo sobre la red vial y detectar correctamente cuándo un origen y un destino no se encuentran conectados.
+#### Solución aplicada
 
-        Una alternativa habría sido utilizar A*. Podría ser más eficiente en redes mucho más grandes si se empleara una heurística geográfica adecuada. Para el tamaño del dataset de esta evaluación, Dijkstra ofrece una implementación suficientemente clara y predecible.
+Los puntos consecutivos de cada polilínea se modelan como conexiones transitables. La distancia geográfica entre puntos se utiliza como costo de las aristas.
 
-        No se consideró válido mover los camiones directamente en línea recta entre carga y descarga, porque eso ignoraría la geometría de los tramos y contradiría el requisito principal de la evaluación.
+Se emplea:
 
-####Actualización en tiempo real
+- **BFS** para identificar componentes conexos.
+- **Dijkstra** para obtener el camino de menor distancia entre carga y descarga.
+- **Snap configurable** para asociar cada ubicación con un nodo cercano de la red.
 
-        Se utilizó Server-Sent Events porque la información viaja principalmente en una sola dirección: desde el backend hacia el navegador.
+Antes de asignar un recorrido se comprueba que origen y destino pertenezcan a componentes compatibles. Cuando una ubicación no tiene una contraparte alcanzable, se excluye y la decisión se expone en la respuesta de la simulación.
 
-        Una alternativa habría sido WebSocket, pero agregaría mayor complejidad para un flujo que no necesita comunicación bidireccional constante. También se implementó polling como respaldo por si la conexión SSE falla o el entorno de despliegue la interrumpe.
+#### Alternativas consideradas
 
-####Persistencia
+**A\*** habría sido una alternativa válida y podría reducir la cantidad de nodos explorados en redes mucho mayores si se utiliza una heurística geográfica adecuada. Para la escala de este dataset, Dijkstra resulta suficientemente claro, determinista y fácil de probar.
 
-        La simulación se mantiene en memoria porque la evaluación no requiere una base de datos productiva y solo se necesita una simulación activa.
+Mover los camiones en línea recta no se consideró una alternativa aceptable porque ignoraría los tramos disponibles y contradiría el requisito principal del ejercicio.
 
-        Con más tiempo, podría utilizarse Redis o una base de datos para conservar las simulaciones después de reiniciar el servidor, admitir varias ejecuciones simultáneas y almacenar históricos.
+#### Mejora posible
 
-        Explicación del reporte
+Con más tiempo, el anclaje de ubicaciones podría proyectarse sobre el punto más cercano de una arista, en lugar de utilizar solamente el vértice más próximo.
 
-        Se utilizó una heurística determinista en lugar de depender obligatoriamente de un modelo de lenguaje. Esto garantiza que la explicación esté siempre disponible y que no invente cifras diferentes de las calculadas.
+### 10.3 Simulación y actualizaciones en tiempo real
 
-        Como alternativa, un LLM podría mejorar la redacción recibiendo únicamente los datos estructurados del reporte. La heurística debería mantenerse como respaldo en caso de que el servicio externo falle.
+Cada camión mantiene un estado propio:
 
-        Validación y manejo del dataset
+```text
+CARGANDO → EN_RUTA → DESCARGANDO → FINALIZADO
+```
 
-        El archivo de entrada se valida al iniciar la aplicación y no se modifica silenciosamente.
+Durante `EN_RUTA`, la distancia avanzada en cada tick se obtiene a partir de la velocidad actual y del tiempo simulado transcurrido. La posición se interpola sobre los segmentos del recorrido, evitando saltos fuera de la red vial.
 
-        La validación contempla datos incompletos, radios nulos, nombres repetidos y ubicaciones pertenecientes a componentes desconectados. Cuando una ubicación de carga o descarga no tiene una contraparte alcanzable, se excluye de la asignación y la decisión aparece de forma visible en la
-        respuesta de la simulación.
+Las velocidades varían dentro de un rango configurable de **15 a 45 km/h**. Cada ejecución puede recibir una semilla opcional:
 
-        El dataset real contiene varios componentes conexos. Por ese motivo, antes de asignar un recorrido se verifica que la carga y la descarga pertenezcan a una zona alcanzable.
+- Con la misma semilla, la simulación es reproducible.
+- Sin semilla, el backend genera una automáticamente y la devuelve en la respuesta.
 
-###Simulación y velocidades
+La escala temporal `APP_TIME_SCALE=5` acelera el reloj de pared para facilitar la demostración. No modifica la distancia simulada por tick, las muestras registradas ni las estadísticas finales.
 
-        Cada camión utiliza una velocidad variable dentro de un rango configurable. La distancia recorrida en cada actualización se calcula utilizando el tiempo simulado transcurrido y la velocidad actual.
+#### Elección de SSE
 
-        La escala temporal permite acelerar la visualización sin modificar los datos de la simulación. Una escala ×5 reduce el tiempo real de espera entre actualizaciones, pero mantiene los mismos ticks, muestras, velocidades y resultados estadísticos.
+Se eligió **Server-Sent Events** porque el flujo principal es unidireccional: el backend publica cambios y el navegador los recibe. Frente a WebSocket, SSE requiere menos complejidad para este caso y cuenta con reconexión nativa mediante `EventSource`.
 
-        La semilla es opcional. Cuando se proporciona una misma semilla, la simulación puede reproducirse con los mismos resultados. Cuando no se proporciona, se genera una semilla aleatoria y esta se incluye en la respuesta.
+Como respaldo, el frontend utiliza polling cuando la conexión SSE no está disponible.
 
-###Cálculo del reporte
+### 10.4 Reporte y explicación heurística
 
-        Las velocidades se registran en intervalos uniformes mientras el camión se encuentra en ruta.
+Mientras cada camión está en ruta, el sistema registra una muestra de velocidad por tick. Como los intervalos son uniformes, la velocidad promedio se calcula mediante la media aritmética:
 
-        La velocidad promedio se obtiene mediante la media aritmética:
+```text
+velocidad promedio = suma de velocidades / cantidad de muestras
+```
 
-        promedio = suma de velocidades / cantidad de muestras
+El reporte incluye por camión:
 
-        Además, el reporte muestra:
+| Indicador | Descripción |
+|---|---|
+| **Muestras** | Cantidad de mediciones registradas |
+| **Velocidad mínima** | Menor velocidad observada |
+| **Velocidad máxima** | Mayor velocidad observada |
+| **Velocidad promedio** | Media aritmética de las muestras |
+| **Distancia** | Longitud total del recorrido |
+| **Duración** | Tiempo simulado del viaje |
 
-        Cantidad de muestras.
-        Velocidad mínima.
-        Velocidad máxima.
-        Velocidad promedio.
-        Camión con mayor promedio.
-        Camión con menor promedio.
-        Comparación con el promedio general de la flota.
-        Advertencias cuando existen pocas muestras.
-        Qué mejoraría con más tiempo
+También se calcula el promedio general de la flota y se identifican los camiones con mayor y menor promedio.
 
-###Con más tiempo implementaría las siguientes mejoras:
+La explicación en lenguaje humano utiliza una heurística determinista. Esta compara los resultados con el promedio de la flota, identifica diferencias relevantes y advierte cuando existen pocas muestras. De esta forma, ninguna cifra depende de un modelo generativo.
 
-        Migraría el frontend de JavaScript a TypeScript para aumentar la seguridad de tipos.
-        Agregaría pruebas automatizadas del frontend.
-        Proyectaría las ubicaciones sobre el punto más cercano de cada arista, en lugar de utilizar únicamente el vértice más cercano.
-        Añadiría persistencia para almacenar simulaciones e históricos.
-        Permitiría varias simulaciones simultáneas.
-        Mejoraría la experiencia móvil y la accesibilidad del mapa.
-        Agregaría métricas, trazabilidad y registros estructurados.
-        Configuraría un pipeline de integración continua para ejecutar automáticamente las pruebas y compilaciones.
-        Implementaría límites y controles adicionales para los endpoints públicos.
-        
-        
-## 11.Uso de Inteligencia Artificial
+Un LLM podría utilizarse únicamente para mejorar la redacción a partir de los datos estructurados. La heurística debe mantenerse como respuesta de respaldo.
 
-        Para desarrollar esta solución utilicé Fable/Claude como herramienta de generación asistida.
+### 10.5 Validación y manejo de errores
 
-        Mi decisión inicial fue utilizar Java con Spring Boot para el backend. Posteriormente proporcioné a la herramienta el archivo JSON real de la evaluación. A partir de esos insumos, la herramienta generó la mayor parte de la estructura, el código del backend, el frontend y una versión inicial
-        de la documentación.
+El archivo de entrada se trata como una fuente inmutable. Los registros inválidos no se corrigen ni se eliminan silenciosamente.
 
-        Mi participación se concentró en ejecutar, verificar y desplegar la solución. Probé el backend y el frontend en Ubuntu, ejecuté las pruebas disponibles, validé los endpoints, comprobé la carga del dataset real, revisé el mapa, la aparición de los cinco camiones, las actualizaciones en tiempo
-        real, la escala temporal ×5 y la generación del reporte.
+La validación contempla:
 
-        También corregí problemas encontrados durante el proceso de despliegue, entre ellos una incompatibilidad entre Vite y el plugin oficial de React, y configuré la comunicación entre el frontend desplegado en Vercel y el backend publicado en Render.
+- Colecciones faltantes o JSON corrupto.
+- Tramos con geometría insuficiente.
+- Coordenadas ausentes o inválidas.
+- Radios con valor `null`.
+- Nombres repetidos.
+- Ubicaciones alejadas de la red.
+- Componentes sin cargas o descargas compatibles.
 
-        No afirmo haber escrito manualmente la totalidad del código. La IA fue utilizada como generador y asistente técnico.
+Los errores y advertencias se incluyen en `/api/network`, mientras que la API utiliza códigos HTTP y mensajes consistentes para estados no válidos.
+
+### 10.6 Persistencia y alcance
+
+El estado se conserva en memoria porque el enunciado permite esta simplificación y solo requiere una simulación activa. Esto reduce la complejidad de despliegue y permite reiniciar la corrida mediante `POST /api/simulation/start`.
+
+La principal consecuencia es que una simulación se pierde al reiniciar o redesplegar el backend.
+
+Una evolución natural sería incorporar Redis o una base de datos para:
+
+- Conservar históricos.
+- Recuperar simulaciones después de un reinicio.
+- Ejecutar varias simulaciones en paralelo.
+- Separar el estado por usuario o sesión.
+
+### 10.7 Mejoras con más tiempo
+
+Las siguientes mejoras ampliarían la calidad y escalabilidad del producto:
+
+1. Migrar el frontend de JavaScript a TypeScript.
+2. Incorporar pruebas unitarias y de integración para React.
+3. Proyectar las ubicaciones sobre la arista más cercana.
+4. Persistir simulaciones e históricos.
+5. Admitir varias simulaciones concurrentes.
+6. Mejorar accesibilidad, experiencia móvil y rendimiento del mapa.
+7. Agregar métricas, trazas y logs estructurados.
+8. Configurar integración continua para ejecutar pruebas y compilaciones.
+9. Aplicar rate limiting y controles adicionales sobre la API pública.
+
+---
+
+## 11. Uso de Inteligencia Artificial
+
+La inteligencia artificial se utilizó de forma intensiva y transparente durante el desarrollo.
+
+| Etapa | Participación |
+|---|---|
+| **Elección tecnológica** | Seleccioné Java con Spring Boot para el backend. |
+| **Insumos** | Proporcioné el archivo JSON real de la evaluación. |
+| **Generación inicial** | Fable/Claude generó la mayor parte de la arquitectura, el backend, el frontend, las pruebas y una primera versión del README. |
+| **Validación local** | Ejecuté las pruebas, levanté ambos proyectos en Ubuntu y comprobé los endpoints, el mapa, los cinco camiones, SSE, la escala ×5 y el reporte. |
+| **Correcciones** | Resolví la incompatibilidad entre Vite 8 y `@vitejs/plugin-react`, y configuré la comunicación entre Vercel y Render. |
+| **Despliegue** | Publiqué el backend en Render, el frontend en Vercel y verifiqué la solución completa desde sus URLs públicas. |
+| **Documentación** | Revisé las decisiones, limitaciones y respuestas finales para representar con precisión el proceso realizado. |
+
+No afirmo haber escrito manualmente la totalidad del código. La IA actuó como generador y asistente técnico; mi responsabilidad fue suministrar los insumos, ejecutar la solución, comprobar su funcionamiento, corregir los problemas encontrados, desplegarla y comprender las decisiones principales necesarias para defender el resultado.
+
+La explicación del reporte no depende de un LLM: utiliza una heurística determinista y verificable. El soporte para LLM es opcional y conserva siempre la heurística como mecanismo de respaldo.
+
+---
+
+## 12. Estado de la entrega
+
+- [x] Backend en Java y Spring Boot.
+- [x] Frontend en React y Leaflet.
+- [x] Dataset real cargado y validado.
+- [x] Cinco camiones sobre recorridos de la red.
+- [x] Velocidades variables y semilla opcional.
+- [x] Actualizaciones mediante SSE con polling de respaldo.
+- [x] Reporte por camión y explicación heurística.
+- [x] Pruebas del backend.
+- [x] Documentación OpenAPI/Swagger.
+- [x] Frontend desplegado en Vercel.
+- [x] Backend desplegado en Render.
+- [x] Repositorio público e instrucciones de ejecución.
